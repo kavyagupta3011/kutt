@@ -59,7 +59,7 @@ test.describe("Suite 1: positive end-to-end workflow", () => {
       expect(rows[0].user_id).toBe(userId);
 
       // UI reflects it: the generated slug is shown on the page
-      await expect(page.getByText(slug, { exact: false })).toBeVisible();
+      await expect(page.locator("h1.link")).toContainText(slug);
     });
 
     // 3. VISIT the short link -> should redirect to the target

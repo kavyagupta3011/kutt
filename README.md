@@ -1,3 +1,218 @@
+# CSE731 Project Setup: Running Kutt Locally
+
+This section explains how to set up and run Kutt (v3.2.6) locally for the CSE731 Software Testing final project. The original Kutt README follows after it.
+
+## 1. Prerequisites
+
+| Tool | Version | Purpose |
+|---|---|---|
+| WSL 2 (Ubuntu) | any recent | Linux environment on Windows. All commands below run inside WSL |
+| Node.js | 20 or newer | Runs the Kutt server |
+| npm | comes with Node | Installs dependencies |
+| Git | any | Clones the repository |
+| PostgreSQL | 14 or newer (local), or a Neon cloud database | Database |
+| Mailpit | latest | Local fake mail server for sign-up verification emails |
+
+Install Node.js 20 in WSL (if not already installed):
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+node -v    # should print v20.x or newer
+```
+
+## 2. Get the code and install dependencies
+
+```bash
+git clone <this-repository-url> kutt_final
+cd kutt_final
+npm install
+```
+
+## 3. Create the `.env` file
+
+Copy the example file and edit it:
+
+```bash
+cp .example.env .env
+```
+
+Minimum settings (the database settings come in step 4):
+
+```env
+PORT=3000
+SITE_NAME=Kutt
+DEFAULT_DOMAIN=localhost:3000
+LINK_LENGTH=6
+TRUST_PROXY=true
+
+# Long random string, generate with:
+# node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+JWT_SECRET=<your-random-secret>
+
+DISALLOW_REGISTRATION=false
+DISALLOW_ANONYMOUS_LINKS=false
+REDIS_ENABLED=false
+```
+
+> `.env` holds secrets. Do not commit it. It is listed in `.gitignore`.
+
+## 4. Database setup (choose one option)
+
+### Option A: Local PostgreSQL in WSL (recommended for testing)
+
+A local database needs no internet connection, is fast, and can be reset freely between test runs.
+
+**Install and start PostgreSQL:**
+
+```bash
+sudo apt update
+sudo apt install -y postgresql
+sudo service postgresql start
+```
+
+**Set the `postgres` user's password and create the database:**
+
+```bash
+sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'password';"
+sudo -u postgres psql -c "CREATE DATABASE kutt;"
+```
+
+**`.env` settings:**
+
+```env
+DB_CLIENT=pg
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_NAME=kutt
+DB_USER=postgres
+DB_PASSWORD=password
+DB_SSL=false
+```
+
+**Forgot the Postgres password?** If `sudo -u postgres psql` itself asks for a password, temporarily allow local logins without one, reset the password, then restore the config:
+
+```bash
+PGHBA=$(ls /etc/postgresql/*/main/pg_hba.conf)
+sudo cp $PGHBA $PGHBA.bak
+sudo sed -i -E 's/^(local\s+all\s+\S+\s+)(md5|scram-sha-256|password|peer)/\1trust/' $PGHBA
+sudo service postgresql restart
+
+psql -U postgres -c "ALTER USER postgres WITH PASSWORD 'password';"
+
+sudo cp $PGHBA.bak $PGHBA
+sudo service postgresql restart
+
+# check it works (enter: password)
+psql -h 127.0.0.1 -U postgres -c "SELECT 1;"
+```
+
+### Option B: Neon (cloud PostgreSQL)
+
+1. Create a free project at [neon.tech](https://neon.tech).
+2. On the project dashboard, open **Connection Details**. Note the **host** (for example `ep-xxxx-xxxx.us-east-2.aws.neon.tech`), the **database name**, the **user** and the **password**.
+3. Set these in `.env`:
+
+```env
+DB_CLIENT=pg
+DB_HOST=<your-neon-host>
+DB_PORT=5432
+DB_NAME=<your-neon-database>
+DB_USER=<your-neon-user>
+DB_PASSWORD=<your-neon-password>
+DB_SSL=true
+```
+
+**Notes for Neon:**
+- `DB_SSL=true` is required, because Neon only accepts encrypted connections.
+- If startup fails with `ETIMEDOUT ...:5432`, your network (for example campus Wi-Fi) is blocking outgoing port 5432. Try another network such as a mobile hotspot. Check with: `nc -vz <your-neon-host> 5432`.
+- `ENETUNREACH` errors on IPv6 addresses inside WSL can be ignored as long as an IPv4 address connects.
+- A cloud database adds network latency and outside failures to test runs, so Option A is preferred for running the test suite.
+
+### Create the tables (both options)
+
+```bash
+npm run migrate
+```
+
+This creates the `users`, `links`, `visits`, `domains`, `hosts` and `ips` tables. If you see `relation "users" does not exist` when opening the app, this step has not been run against the current database.
+
+## 5. Email setup with Mailpit (needed for sign-up)
+
+Kutt only shows the **Sign up** option when email is enabled, because new accounts must verify their email. Mailpit is a local mail server that catches every email and shows it in a web inbox. Nothing is actually sent.
+
+**Install Mailpit in WSL:**
+
+```bash
+sudo bash < <(curl -sL https://raw.githubusercontent.com/axllent/mailpit/develop/install.sh)
+```
+
+**Add to `.env`:**
+
+```env
+MAIL_ENABLED=true
+MAIL_HOST=127.0.0.1
+MAIL_PORT=1025
+MAIL_SECURE=false
+MAIL_FROM=kutt@localhost
+```
+
+Leave `MAIL_USER` and `MAIL_PASSWORD` empty. Use `127.0.0.1` rather than `localhost` so Kutt does not try IPv6 (`::1`) first.
+
+## 6. Run the application
+
+Use **two WSL terminals**.
+
+**Terminal 1: Mailpit**
+
+```bash
+mailpit
+```
+
+**Terminal 2: Kutt**
+
+```bash
+sudo service postgresql start   # only for Option A
+npm run dev
+```
+
+| URL | What |
+|---|---|
+| http://localhost:3000 | Kutt app |
+| http://localhost:8025 | Mailpit inbox (verification and reset emails) |
+
+## 7. First-time use
+
+1. **Create the admin:** on a fresh database, the first visit to http://localhost:3000 shows a **create admin** page. The first account created there gets the `ADMIN` role.
+2. **Sign up a normal user:** log out, choose **Log in / Sign up**, enter an email and password (8–64 characters) and click **Sign up**.
+3. **Verify the email:** open http://localhost:8025 and click the verification link in the email.
+   - **Known issue:** Kutt always builds email links with `https://`, but the local server only serves plain `http`, so the browser shows `ERR_SSL_PROTOCOL_ERROR`. Change `https://` to `http://` in the address bar. If Chrome keeps forcing https on localhost, open `chrome://net-internals/#hsts` and delete the domain security policy for `localhost`.
+4. **Roles:** only the first account (admin) sees the **Admin** page. Accounts made through sign-up are normal users. Admins can also create users from **Admin → Users → Create user**.
+
+## 8. Daily start checklist
+
+```bash
+sudo service postgresql start   # Option A only
+mailpit                         # terminal 1
+npm run dev                     # terminal 2
+```
+
+## 9. Troubleshooting
+
+| Error | Cause | Fix |
+|---|---|---|
+| No **Sign up** button | `MAIL_ENABLED=false` | Set up Mailpit (step 5) and restart Kutt |
+| `connect ECONNREFUSED 127.0.0.1:1025` / `::1:1025` | Mailpit not running, or running on the Windows side | Run `mailpit` inside WSL. Use `MAIL_HOST=127.0.0.1` |
+| `ERR_SSL_PROTOCOL_ERROR` on the verify link | Email link uses `https://` | Change it to `http://` (see step 7) |
+| `password authentication failed for user "postgres"` | Wrong or forgotten DB password | Reset it (step 4, Option A) |
+| `relation "users" does not exist` | Tables not created | `npm run migrate` |
+| `ETIMEDOUT <ip>:5432` | Cloud DB unreachable from this network | Use another network, or switch to Option A |
+| Repeated login/sign-up attempts rejected | Rate limit: 5 requests per minute on auth routes | Wait one minute |
+
+---
+
+# Original Kutt README
+
 <p align="center"><a href="https://kutt.to" title="kutt.to"><img src="https://raw.githubusercontent.com/thedevs-network/kutt/9d1c873897c3f5b9a1bd0c74dc5d23f2ed01f2ec/static/images/logo-github.png" alt="Kutt.to"></a></p>
 
 # Kutt.to

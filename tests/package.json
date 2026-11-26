@@ -1,0 +1,15 @@
+{
+  "name": "kutt-tests",
+  "version": "1.0.0",
+  "description": "CSE731 end-to-end testing suite for Kutt",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "dotenv": "^16.4.5",
+    "pg": "^8.13.1"
+  }
+}

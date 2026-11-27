@@ -20,8 +20,16 @@ async function login(page, { email, password }) {
   await page.goto("/login");
   await page.fill("#email", email);
   await page.fill("#password", password);
-  await page.click('#login-signup button[type="submit"]');
-  await expect(page.getByText("Log out")).toBeVisible();
+  // wait for the actual login request so we don't race the htmx redirect
+  const [res] = await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().endsWith("/api/auth/login") && r.request().method() === "POST"
+    ),
+    page.click('#login-signup button[type="submit"]'),
+  ]);
+  expect(res.ok(), "login request should succeed").toBeTruthy();
+  await page.goto("/");
+  await expect(page.getByText("Log out")).toBeVisible({ timeout: 15000 });
 }
 
 test.describe("Suite 1: positive end-to-end workflow", () => {

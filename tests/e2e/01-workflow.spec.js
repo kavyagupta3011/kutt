@@ -28,6 +28,19 @@ async function login(page, { email, password }) {
     page.click('#login-signup button[type="submit"]'),
   ]);
   expect(res.ok(), "login request should succeed").toBeTruthy();
+  // The server sets the session in a "token" cookie on this response. Kutt marks
+  // it Secure even on plain http (NODE_ENV defaults to production). Chromium, Edge
+  // and Firefox accept Secure cookies on http://localhost; WebKit refuses them.
+  // So if the browser did not keep it, copy it from the same real login response.
+  const setCookie = (await res.headerValue("set-cookie")) || "";
+  const match = setCookie.match(/(?:^|[\s,;])token=([^;]+)/);
+  expect(match, "login response should set the token cookie").toBeTruthy();
+  const stored = (await page.context().cookies()).some((c) => c.name === "token");
+  if (!stored) {
+    await page.context().addCookies([
+      { name: "token", value: match[1], url: "http://localhost:3000", httpOnly: true, sameSite: "Lax" },
+    ]);
+  }
   await page.goto("/");
   await expect(page.getByText("Log out")).toBeVisible({ timeout: 15000 });
 }
@@ -117,7 +130,15 @@ test.describe("Suite 1: positive end-to-end workflow", () => {
 
     // 6. LOGOUT (UI)
     await test.step("logout", async () => {
-      await page.goto("/logout");
+      const logoutRes = await page.goto("/logout");
+      // The server logs out by sending a Set-Cookie that deletes "token".
+      expect((await logoutRes.headerValue("set-cookie")) || "", "logout should clear the token cookie")
+        .toMatch(/(?:^|[\s,;])token=;/);
+      // That Set-Cookie is also marked Secure, so WebKit ignores it on plain http
+      // (same as at login); apply the deletion the server asked for.
+      if ((await page.context().cookies()).some((c) => c.name === "token")) {
+        await page.context().clearCookies({ name: "token" });
+      }
       await page.goto("/");
       await expect(page.getByText("Log in / Sign up")).toBeVisible();
     });

@@ -427,7 +427,15 @@ test.describe("Control-flow level", () => {
     await context.addCookies([{ name: "token", value: token, url: api.BASE_URL }]);
     await page.goto("/settings");
     await expect(page.locator("#apikey-wrapper")).toBeVisible();
-    await page.goto("/logout");
+    const logoutRes = await page.goto("/logout");
+    // The server logs out by sending a Set-Cookie that deletes "token".
+    expect((await logoutRes.headerValue("set-cookie")) || "", "logout should clear the token cookie")
+      .toMatch(/(?:^|[\s,;])token=;/);
+    // Kutt marks that Set-Cookie Secure even on plain http, which WebKit refuses on
+    // http://localhost; apply the deletion the server asked for (no-op elsewhere).
+    if ((await context.cookies()).some((c) => c.name === "token")) {
+      await context.clearCookies({ name: "token" });
+    }
     await expect(page.getByText("Log in / Sign up")).toBeVisible();
     await page.goBack();
     await page.reload();
